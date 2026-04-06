@@ -68,6 +68,11 @@ import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 
 import androidx.media3.common.util.UnstableApi;
+import androidx.media3.common.Timeline;
+import android.content.res.ColorStateList;
+import android.graphics.Color;
+import com.google.android.material.color.MaterialColors;
+import androidx.annotation.Nullable;
 
 @UnstableApi
 public class MainActivity extends AppCompatActivity {
@@ -96,6 +101,8 @@ public class MainActivity extends AppCompatActivity {
     private DrawerLayout drawerLayout;
     private PlaylistAdapter playlistAdapter;
     private RecyclerView playlistRecyclerView;
+    private QueueAdapter queueAdapter;
+    private RecyclerView queueRecyclerView;
     private AppDatabase db;
     private ItemTouchHelper itemTouchHelper;
     private long currentPlaylistId = -1;
@@ -215,6 +222,16 @@ public class MainActivity extends AppCompatActivity {
         ImageButton nextButton = findViewById(R.id.nextButton);
         ImageButton prevButton = findViewById(R.id.prevButton);
         playlistRecyclerView = findViewById(R.id.playlistRecyclerView);
+        queueRecyclerView = findViewById(R.id.queueRecyclerView);
+        queueRecyclerView.setLayoutManager(new LinearLayoutManager(this));
+        queueAdapter = new QueueAdapter(position -> {
+            if (mediaController != null) {
+                mediaController.seekTo(position, 0);
+                mediaController.play();
+            }
+        });
+        queueRecyclerView.setAdapter(queueAdapter);
+
         ImageButton addPlaylistButton = findViewById(R.id.addPlaylistButton);
         Button allTracksButton = findViewById(R.id.allTracksButton);
         
@@ -547,8 +564,10 @@ public class MainActivity extends AppCompatActivity {
         builder.setPositiveButton("Rename", (dialog, which) -> {
             String newName = input.getText().toString().trim();
             if (!newName.isEmpty()) {
-                db.playlistDao().updateName(playlist.getId(), newName);
-                refreshPlaylists();
+                backgroundExecutor.execute(() -> {
+                    db.playlistDao().updateName(playlist.getId(), newName);
+                    refreshPlaylists();
+                });
             }
         });
         builder.setNegativeButton("Cancel", null);
@@ -560,37 +579,47 @@ public class MainActivity extends AppCompatActivity {
             .setTitle("Delete Playlist")
             .setMessage("Are you sure you want to delete '" + playlist.getName() + "'?")
             .setPositiveButton("Delete", (dialog, which) -> {
-                db.playlistDao().delete(playlist);
-                refreshPlaylists();
+                backgroundExecutor.execute(() -> {
+                    db.playlistDao().delete(playlist);
+                    refreshPlaylists();
+                });
             })
             .setNegativeButton("Cancel", null)
             .show();
     }
 
     private void refreshPlaylists() {
-        List<Playlist> playlists = db.playlistDao().getAllPlaylists();
-        playlistAdapter.setPlaylists(playlists);
-        refreshDrawerTags();
+        backgroundExecutor.execute(() -> {
+            List<Playlist> playlists = db.playlistDao().getAllPlaylists();
+            runOnUiThread(() -> {
+                playlistAdapter.setPlaylists(playlists);
+                refreshDrawerTags();
+            });
+        });
     }
 
     private void refreshDrawerTags() {
-        drawerTagGroup.removeAllViews();
-        List<String> tags = musicLibrary.getAllUniqueTags();
-        for (String tag : tags) {
-            Chip chip = new Chip(this);
-            chip.setText(tag);
-            chip.setCheckable(true);
-            chip.setOnClickListener(v -> {
-                if (((Chip)v).isChecked()) {
-                    List<MusicTrack> filtered = musicLibrary.getTracksByTag(tag);
-                    adapter.setTracks(filtered);
-                } else {
-                    adapter.setTracks(musicLibrary.getAllTracks());
+        backgroundExecutor.execute(() -> {
+            List<String> tags = musicLibrary.getAllUniqueTags();
+            runOnUiThread(() -> {
+                drawerTagGroup.removeAllViews();
+                for (String tag : tags) {
+                    Chip chip = new Chip(this);
+                    chip.setText(tag);
+                    chip.setCheckable(true);
+                    chip.setOnClickListener(v -> {
+                        if (((Chip)v).isChecked()) {
+                            List<MusicTrack> filtered = musicLibrary.getTracksByTag(tag);
+                            adapter.setTracks(filtered);
+                        } else {
+                            adapter.setTracks(musicLibrary.getAllTracks());
+                        }
+                        drawerLayout.closeDrawer(GravityCompat.START);
+                    });
+                    drawerTagGroup.addView(chip);
                 }
-                drawerLayout.closeDrawer(GravityCompat.START);
             });
-            drawerTagGroup.addView(chip);
-        }
+        });
     }
 
     private void showCreatePlaylistDialog() {
@@ -602,8 +631,10 @@ public class MainActivity extends AppCompatActivity {
         builder.setPositiveButton("Create", (dialog, which) -> {
             String name = input.getText().toString().trim();
             if (!name.isEmpty()) {
-                db.playlistDao().insert(new Playlist(name));
-                refreshPlaylists();
+                backgroundExecutor.execute(() -> {
+                    db.playlistDao().insert(new Playlist(name));
+                    refreshPlaylists();
+                });
             }
         });
         builder.setNegativeButton("Cancel", null);
@@ -612,7 +643,7 @@ public class MainActivity extends AppCompatActivity {
 
     private void loadPlaylist(Playlist playlist) {
         currentPlaylistId = playlist.getId();
-        new Thread(() -> {
+        backgroundExecutor.execute(() -> {
             List<MusicTrack> tracks = db.playlistDao().getTracksForPlaylist(playlist.getId());
             runOnUiThread(() -> {
                 if (adapter != null) {
@@ -627,7 +658,7 @@ public class MainActivity extends AppCompatActivity {
                 drawerLayout.closeDrawer(GravityCompat.START);
                 Toast.makeText(this, "Loaded: " + playlist.getName(), Toast.LENGTH_SHORT).show();
             });
-        }).start();
+        });
     }
 
     private void setupDragAndDrop() {
@@ -667,11 +698,11 @@ public class MainActivity extends AppCompatActivity {
         if (currentPlaylistId == -1 || adapter == null) return;
         List<MusicTrack> tracks = new ArrayList<>(adapter.getTracks());
         long playlistId = currentPlaylistId;
-        new Thread(() -> {
+        backgroundExecutor.execute(() -> {
             for (int i = 0; i < tracks.size(); i++) {
                 db.playlistDao().updateTrackOrder(playlistId, tracks.get(i).getFilePath(), i);
             }
-        }).start();
+        });
     }
 
     private void showEditTrackDialog(MusicTrack track, int position) {
@@ -774,42 +805,55 @@ public class MainActivity extends AppCompatActivity {
 
         trackName.setText(track.getTitle());
         
-        List<Playlist> playlists = db.playlistDao().getAllPlaylists();
-        playlistsList.setLayoutManager(new LinearLayoutManager(this));
-        
-        playlistsList.setAdapter(new RecyclerView.Adapter<PlaylistSelectionViewHolder>() {
-            @NonNull
-            @Override
-            public PlaylistSelectionViewHolder onCreateViewHolder(@NonNull ViewGroup parent, int viewType) {
-                View v = LayoutInflater.from(parent.getContext()).inflate(R.layout.item_playlist_selection, parent, false);
-                return new PlaylistSelectionViewHolder(v);
+        backgroundExecutor.execute(() -> {
+            List<Playlist> playlists = db.playlistDao().getAllPlaylists();
+            // Pre-fetch which playlists this track is in
+            java.util.Set<Long> inPlaylists = new java.util.HashSet<>();
+            for (Playlist p : playlists) {
+                if (db.playlistDao().isTrackInPlaylist(p.getId(), track.getFilePath())) {
+                    inPlaylists.add(p.getId());
+                }
             }
 
-            @Override
-            public void onBindViewHolder(@NonNull PlaylistSelectionViewHolder holder, int position) {
-                Playlist playlist = playlists.get(position);
-                holder.name.setText(playlist.getName());
-                boolean isChecked = db.playlistDao().isTrackInPlaylist(playlist.getId(), track.getFilePath());
-                holder.checkBox.setChecked(isChecked);
-                
-                holder.itemView.setOnClickListener(v -> holder.checkBox.toggle());
-                
-                holder.checkBox.setOnCheckedChangeListener((buttonView, isNowChecked) -> {
-                    new Thread(() -> {
-                        if (isNowChecked) {
-                            int nextOrder = db.playlistDao().getMaxOrderForPlaylist(playlist.getId()) + 1;
-                            db.playlistDao().addTrackToPlaylist(new PlaylistTrack(playlist.getId(), track.getFilePath(), nextOrder));
-                        } else {
-                            db.playlistDao().removeTrackFromPlaylist(playlist.getId(), track.getFilePath());
-                        }
-                    }).start();
+            runOnUiThread(() -> {
+                playlistsList.setLayoutManager(new LinearLayoutManager(this));
+                playlistsList.setAdapter(new RecyclerView.Adapter<PlaylistSelectionViewHolder>() {
+                    @NonNull
+                    @Override
+                    public PlaylistSelectionViewHolder onCreateViewHolder(@NonNull ViewGroup parent, int viewType) {
+                        View v = LayoutInflater.from(parent.getContext()).inflate(R.layout.item_playlist_selection, parent, false);
+                        return new PlaylistSelectionViewHolder(v);
+                    }
+
+                    @Override
+                    public void onBindViewHolder(@NonNull PlaylistSelectionViewHolder holder, int position) {
+                        Playlist playlist = playlists.get(position);
+                        holder.name.setText(playlist.getName());
+                        holder.checkBox.setOnCheckedChangeListener(null); // Clear first
+                        holder.checkBox.setChecked(inPlaylists.contains(playlist.getId()));
+                        
+                        holder.itemView.setOnClickListener(v -> holder.checkBox.toggle());
+                        
+                        holder.checkBox.setOnCheckedChangeListener((buttonView, isNowChecked) -> {
+                            backgroundExecutor.execute(() -> {
+                                if (isNowChecked) {
+                                    int nextOrder = db.playlistDao().getMaxOrderForPlaylist(playlist.getId()) + 1;
+                                    db.playlistDao().addTrackToPlaylist(new PlaylistTrack(playlist.getId(), track.getFilePath(), nextOrder));
+                                    inPlaylists.add(playlist.getId());
+                                } else {
+                                    db.playlistDao().removeTrackFromPlaylist(playlist.getId(), track.getFilePath());
+                                    inPlaylists.remove(playlist.getId());
+                                }
+                            });
+                        });
+                    }
+
+                    @Override
+                    public int getItemCount() {
+                        return playlists.size();
+                    }
                 });
-            }
-
-            @Override
-            public int getItemCount() {
-                return playlists.size();
-            }
+            });
         });
 
         btnDone.setOnClickListener(v -> bottomSheetDialog.dismiss());
@@ -865,13 +909,17 @@ public class MainActivity extends AppCompatActivity {
                     }
                 }
                 
-                db.trackDao().update(track);
-                if (adapter != null) {
-                    adapter.notifyItemChanged(position);
-                }
-                refreshDrawerTags();
-                updateUI();
-                bottomSheetDialog.dismiss();
+                backgroundExecutor.execute(() -> {
+                    db.trackDao().update(track);
+                    runOnUiThread(() -> {
+                        if (adapter != null) {
+                            adapter.notifyItemChanged(position);
+                        }
+                        refreshDrawerTags();
+                        updateUI();
+                        bottomSheetDialog.dismiss();
+                    });
+                });
             }
         });
 
@@ -950,7 +998,8 @@ public class MainActivity extends AppCompatActivity {
                                 Player.EVENT_PLAY_WHEN_READY_CHANGED,
                                 Player.EVENT_IS_PLAYING_CHANGED,
                                 Player.EVENT_REPEAT_MODE_CHANGED,
-                                Player.EVENT_SHUFFLE_MODE_ENABLED_CHANGED)) {
+                                Player.EVENT_SHUFFLE_MODE_ENABLED_CHANGED,
+                                Player.EVENT_TIMELINE_CHANGED)) {
                             updateUI();
                         }
                     }
@@ -963,11 +1012,89 @@ public class MainActivity extends AppCompatActivity {
                         }
                     }
                 });
+                restoreQueue();
                 updateUI();
             } catch (ExecutionException | InterruptedException e) {
                 e.printStackTrace();
             }
         }, MoreExecutors.directExecutor());
+    }
+
+    private void restoreQueue() {
+        if (mediaController == null || mediaController.getMediaItemCount() > 0) return;
+
+        backgroundExecutor.execute(() -> {
+            List<QueueItem> savedQueue = db.trackDao().getSavedQueue();
+            if (savedQueue.isEmpty()) return;
+
+            List<MediaItem> mediaItems = new ArrayList<>();
+            for (QueueItem item : savedQueue) {
+                MusicTrack t = db.trackDao().getByPath(item.getTrackPath());
+                if (t != null) {
+                    Uri artworkUri = ContentUris.withAppendedId(Uri.parse("content://media/external/audio/albumart"), t.getAlbumId());
+                    MediaMetadata metadata = new MediaMetadata.Builder()
+                            .setTitle(t.getTitle())
+                            .setArtist(t.getArtist())
+                            .setArtworkUri(artworkUri)
+                            .build();
+
+                    MediaItem mediaItem = new MediaItem.Builder()
+                            .setMediaId(t.getFilePath())
+                            .setUri(Uri.parse(t.getFilePath()))
+                            .setMediaMetadata(metadata)
+                            .build();
+                    mediaItems.add(mediaItem);
+                }
+            }
+
+            if (!mediaItems.isEmpty()) {
+                runOnUiThread(() -> {
+                    mediaController.setMediaItems(mediaItems);
+                    SharedPreferences prefs = getSharedPreferences("MusicPlayerPrefs", MODE_PRIVATE);
+                    String lastPath = prefs.getString("last_played_path", null);
+                    long lastPos = prefs.getLong("last_played_pos", 0);
+                    
+                    if (lastPath != null) {
+                        for (int i = 0; i < mediaItems.size(); i++) {
+                            if (mediaItems.get(i).mediaId.equals(lastPath)) {
+                                mediaController.seekTo(i, lastPos);
+                                break;
+                            }
+                        }
+                    }
+                    mediaController.prepare();
+                });
+            }
+        });
+    }
+
+    private void saveQueueToDb() {
+        if (mediaController == null) return;
+        
+        List<QueueItem> queueItems = new ArrayList<>();
+        for (int i = 0; i < mediaController.getMediaItemCount(); i++) {
+            MediaItem item = mediaController.getMediaItemAt(i);
+            if (item.mediaId != null) {
+                queueItems.add(new QueueItem(item.mediaId, i));
+            }
+        }
+
+        long currentPos = mediaController.getCurrentPosition();
+        MediaItem currentItem = mediaController.getCurrentMediaItem();
+        String currentPath = currentItem != null ? currentItem.mediaId : null;
+
+        backgroundExecutor.execute(() -> {
+            db.trackDao().clearQueue();
+            if (!queueItems.isEmpty()) {
+                db.trackDao().saveQueue(queueItems);
+            }
+            if (currentPath != null) {
+                getSharedPreferences("MusicPlayerPrefs", MODE_PRIVATE).edit()
+                    .putString("last_played_path", currentPath)
+                    .putLong("last_played_pos", currentPos)
+                    .apply();
+            }
+        });
     }
 
     private void updateProgress() {
@@ -1042,6 +1169,15 @@ public class MainActivity extends AppCompatActivity {
                     }
                 }
             }
+
+            if (queueAdapter != null) {
+                List<MediaItem> mediaItems = new ArrayList<>();
+                for (int i = 0; i < mediaController.getMediaItemCount(); i++) {
+                    mediaItems.add(mediaController.getMediaItemAt(i));
+                }
+                queueAdapter.setQueueItems(mediaItems, mediaController.getCurrentMediaItemIndex());
+            }
+
             if (mediaController.getPlaybackState() == Player.STATE_READY) {
                 playbackSeekBar.setMax((int) mediaController.getDuration());
                 totalTime.setText(formatTime((int) mediaController.getDuration()));
@@ -1053,6 +1189,7 @@ public class MainActivity extends AppCompatActivity {
     protected void onStop() {
         super.onStop();
         handler.removeCallbacks(updateSeekBarTask);
+        saveQueueToDb();
         if (controllerFuture != null) {
             MediaController.releaseFuture(controllerFuture);
         }

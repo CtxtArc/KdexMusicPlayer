@@ -23,4 +23,13 @@ public interface TrackDao {
 
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     void insertAll(List<MusicTrack> tracks);
+
+    @Query("DELETE FROM current_queue")
+    void clearQueue();
+
+    @Insert
+    void saveQueue(List<QueueItem> queueItems);
+
+    @Query("SELECT * FROM current_queue ORDER BY displayOrder ASC")
+    List<QueueItem> getSavedQueue();
 }
