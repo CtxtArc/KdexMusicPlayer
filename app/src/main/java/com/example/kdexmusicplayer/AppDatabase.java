@@ -6,7 +6,7 @@ import androidx.room.Room;
 import androidx.room.RoomDatabase;
 import androidx.room.TypeConverters;
 
-@Database(entities = {MusicTrack.class, Playlist.class, PlaylistTrack.class}, version = 4)
+@Database(entities = {MusicTrack.class, Playlist.class, PlaylistTrack.class}, version = 5)
 @TypeConverters({Converters.class})
 public abstract class AppDatabase extends RoomDatabase {
     public abstract TrackDao trackDao();

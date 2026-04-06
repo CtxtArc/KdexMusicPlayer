@@ -84,4 +84,17 @@
         app:iconTint="?attr/colorPrimary"
         app:iconPadding="16dp" />
 
+    <com.google.android.material.button.MaterialButton
+        android:id="@+id/btnRemoveFromPlaylist"
+        style="@style/Widget.Material3.Button.TextButton.Icon"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:text="Remove from Playlist"
+        android:gravity="start|center_vertical"
+        android:textColor="@color/cat_red"
+        android:visibility="gone"
+        app:icon="@drawable/ic_delete"
+        app:iconTint="@color/cat_red"
+        app:iconPadding="16dp" />
+
 </LinearLayout>

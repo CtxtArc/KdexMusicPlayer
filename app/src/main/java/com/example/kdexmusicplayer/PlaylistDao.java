@@ -34,6 +34,14 @@ public interface PlaylistDao {
     @Transaction
     @Query("SELECT tracks.* FROM tracks " +
            "INNER JOIN playlist_tracks ON tracks.filePath = playlist_tracks.trackPath " +
-           "WHERE playlist_tracks.playlistId = :playlistId")
+           "WHERE playlist_tracks.playlistId = :playlistId " +
+           "ORDER BY playlist_tracks.displayOrder ASC")
     List<MusicTrack> getTracksForPlaylist(long playlistId);
+
+    @Query("SELECT MAX(displayOrder) FROM playlist_tracks WHERE playlistId = :playlistId")
+    int getMaxOrderForPlaylist(long playlistId);
+
+    @Query("UPDATE playlist_tracks SET displayOrder = :newOrder " +
+           "WHERE playlistId = :playlistId AND trackPath = :trackPath")
+    void updateTrackOrder(long playlistId, String trackPath, int newOrder);
 }

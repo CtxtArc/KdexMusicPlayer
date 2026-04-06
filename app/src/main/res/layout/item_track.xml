@@ -19,6 +19,15 @@
         android:gravity="center_vertical"
         android:background="?android:attr/selectableItemBackground">
 
+        <ImageView
+            android:id="@+id/dragHandle"
+            android:layout_width="32dp"
+            android:layout_height="32dp"
+            android:layout_marginEnd="8dp"
+            android:src="@drawable/ic_drag_handle"
+            android:visibility="gone"
+            app:tint="?attr/colorOnSurfaceVariant" />
+
         <com.google.android.material.imageview.ShapeableImageView
             android:id="@+id/itemAlbumArt"
             android:layout_width="64dp"

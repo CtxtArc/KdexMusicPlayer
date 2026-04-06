@@ -7,6 +7,8 @@ import android.widget.TextView;
 import android.widget.ImageView;
 import android.net.Uri;
 import android.content.ContentUris;
+import android.os.Handler;
+import android.os.Looper;
 import com.bumptech.glide.Glide;
 import com.bumptech.glide.load.resource.drawable.DrawableTransitionOptions;
 import com.google.android.material.chip.Chip;
@@ -23,10 +25,6 @@ public class TrackAdapter extends RecyclerView.Adapter<TrackAdapter.TrackViewHol
 
     private List<MusicTrack> tracks;
     private List<MusicTrack> fullTracksList;
-    private final OnTrackClickListener listener;
-    private final OnTrackLongClickListener longClickListener;
-    private String selectedTrackPath = "";
-
     public interface OnTrackClickListener {
         void onTrackClick(MusicTrack track, int position);
     }
@@ -35,11 +33,36 @@ public class TrackAdapter extends RecyclerView.Adapter<TrackAdapter.TrackViewHol
         void onTrackLongClick(MusicTrack track, int position);
     }
 
-    public TrackAdapter(List<MusicTrack> tracks, OnTrackClickListener listener, OnTrackLongClickListener longClickListener) {
+    public interface OnTrackDoubleClickListener {
+        void onTrackDoubleClick(MusicTrack track, int position);
+    }
+
+    public interface OnStartDragListener {
+        void onStartDrag(RecyclerView.ViewHolder viewHolder);
+    }
+
+    private final OnTrackClickListener listener;
+    private final OnTrackLongClickListener longClickListener;
+    private final OnTrackDoubleClickListener doubleClickListener;
+    private String selectedTrackPath = "";
+    private OnStartDragListener dragListener;
+    private boolean showDragHandle = false;
+
+    public TrackAdapter(List<MusicTrack> tracks, OnTrackClickListener listener, OnTrackLongClickListener longClickListener, OnTrackDoubleClickListener doubleClickListener) {
         this.tracks = tracks;
         this.fullTracksList = new ArrayList<>(tracks);
         this.listener = listener;
         this.longClickListener = longClickListener;
+        this.doubleClickListener = doubleClickListener;
+    }
+
+    public void setOnStartDragListener(OnStartDragListener dragListener) {
+        this.dragListener = dragListener;
+    }
+
+    public void setShowDragHandle(boolean show) {
+        this.showDragHandle = show;
+        notifyDataSetChanged();
     }
 
     public void filter(String text) {
@@ -116,9 +139,42 @@ public class TrackAdapter extends RecyclerView.Adapter<TrackAdapter.TrackViewHol
             holder.tagGroup.addView(chip);
         }
 
-        holder.itemView.setOnClickListener(v -> listener.onTrackClick(track, position));
+        holder.dragHandle.setVisibility(showDragHandle ? View.VISIBLE : View.GONE);
+        holder.dragHandle.setOnTouchListener((v, event) -> {
+            if (event.getActionMasked() == android.view.MotionEvent.ACTION_DOWN) {
+                if (dragListener != null) {
+                    dragListener.onStartDrag(holder);
+                }
+            }
+            return false;
+        });
+
+        holder.itemView.setOnClickListener(new View.OnClickListener() {
+            private final Handler handler = new Handler(Looper.getMainLooper());
+            private Runnable pendingClick;
+
+            @Override
+            public void onClick(View v) {
+                if (pendingClick != null) {
+                    handler.removeCallbacks(pendingClick);
+                    pendingClick = null;
+                    doubleClickListener.onTrackDoubleClick(track, holder.getAdapterPosition());
+                } else {
+                    pendingClick = () -> {
+                        listener.onTrackClick(track, holder.getAdapterPosition());
+                        pendingClick = null;
+                    };
+                    handler.postDelayed(pendingClick, 300);
+                }
+            }
+        });
+
         holder.itemView.setOnLongClickListener(v -> {
-            longClickListener.onTrackLongClick(track, position);
+            if (dragListener != null) {
+                dragListener.onStartDrag(holder);
+                return true;
+            }
+            longClickListener.onTrackLongClick(track, holder.getAdapterPosition());
             return true;
         });
     }
@@ -154,6 +210,7 @@ public class TrackAdapter extends RecyclerView.Adapter<TrackAdapter.TrackViewHol
         TextView title, artist;
         ImageView albumArt;
         ChipGroup tagGroup;
+        ImageView dragHandle;
 
         public TrackViewHolder(@NonNull View itemView) {
             super(itemView);
@@ -161,6 +218,7 @@ public class TrackAdapter extends RecyclerView.Adapter<TrackAdapter.TrackViewHol
             artist = itemView.findViewById(R.id.trackArtist);
             albumArt = itemView.findViewById(R.id.itemAlbumArt);
             tagGroup = itemView.findViewById(R.id.tagGroup);
+            dragHandle = itemView.findViewById(R.id.dragHandle);
         }
     }
 }

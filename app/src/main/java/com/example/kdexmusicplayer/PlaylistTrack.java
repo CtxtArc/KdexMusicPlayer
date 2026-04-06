@@ -28,9 +28,11 @@ public class PlaylistTrack {
     public long playlistId;
     @NonNull
     public String trackPath;
+    public int displayOrder;
 
-    public PlaylistTrack(long playlistId, @NonNull String trackPath) {
+    public PlaylistTrack(long playlistId, @NonNull String trackPath, int displayOrder) {
         this.playlistId = playlistId;
         this.trackPath = trackPath;
+        this.displayOrder = displayOrder;
     }
 }

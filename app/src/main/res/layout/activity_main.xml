@@ -287,14 +287,15 @@
                     android:orientation="horizontal"
                     android:gravity="center_vertical">
 
-                    <ImageView
+                    <com.google.android.material.imageview.ShapeableImageView
                         android:id="@+id/albumArt"
                         android:layout_width="48dp"
                         android:layout_height="48dp"
                         android:scaleType="centerCrop"
                         android:src="@mipmap/ic_launcher"
                         android:background="@drawable/ic_launcher_background"
-                        android:layout_marginEnd="12dp" />
+                        android:layout_marginEnd="12dp"
+                        app:shapeAppearanceOverlay="@style/ShapeAppearance.Material3.Corner.Small" />
 
                     <LinearLayout
                         android:layout_width="0dp"
@@ -356,6 +357,24 @@
                         android:scaleType="fitCenter"
                         app:tint="?attr/colorOnSurface"
                         android:contentDescription="Next" />
+
+                    <ImageButton
+                        android:id="@+id/shuffleButton"
+                        android:layout_width="40dp"
+                        android:layout_height="40dp"
+                        android:background="?attr/selectableItemBackgroundBorderless"
+                        android:src="@drawable/ic_shuffle"
+                        app:tint="?attr/colorOnSurfaceVariant"
+                        android:contentDescription="Shuffle" />
+
+                    <ImageButton
+                        android:id="@+id/repeatButton"
+                        android:layout_width="40dp"
+                        android:layout_height="40dp"
+                        android:background="?attr/selectableItemBackgroundBorderless"
+                        android:src="@drawable/ic_repeat"
+                        app:tint="?attr/colorOnSurfaceVariant"
+                        android:contentDescription="Repeat" />
                 </LinearLayout>
 
                 <LinearLayout

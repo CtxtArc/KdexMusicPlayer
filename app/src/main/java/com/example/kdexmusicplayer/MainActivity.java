@@ -15,9 +15,10 @@ import android.view.LayoutInflater;
 import android.view.ViewGroup;
 import android.widget.MultiAutoCompleteTextView;
 import android.widget.EditText;
-import android.widget.LinearLayout;
 import android.text.TextUtils;
 import androidx.appcompat.widget.SearchView;
+import androidx.recyclerview.widget.LinearLayoutManager;
+import androidx.recyclerview.widget.RecyclerView;
 import android.widget.ImageButton;
 import android.widget.TextView;
 import android.widget.Toast;
@@ -50,8 +51,8 @@ import androidx.media3.common.MediaMetadata;
 import androidx.media3.common.Player;
 import androidx.media3.session.MediaController;
 import androidx.media3.session.SessionToken;
-import androidx.recyclerview.widget.LinearLayoutManager;
-import androidx.recyclerview.widget.RecyclerView;
+import androidx.recyclerview.widget.ItemTouchHelper;
+import java.util.Collections;
 
 import com.google.common.util.concurrent.ListenableFuture;
 import com.google.common.util.concurrent.MoreExecutors;
@@ -88,6 +89,8 @@ public class MainActivity extends AppCompatActivity {
     private PlaylistAdapter playlistAdapter;
     private RecyclerView playlistRecyclerView;
     private AppDatabase db;
+    private ItemTouchHelper itemTouchHelper;
+    private long currentPlaylistId = -1;
     private View searchBarContainer;
     private ImageButton searchButton;
     private ImageButton closeSearchButton;
@@ -98,6 +101,8 @@ public class MainActivity extends AppCompatActivity {
     private String selectedLibraryPath;
     private ActivityResultLauncher<Uri> folderPickerLauncher;
 
+    private ImageButton shuffleButton;
+    private ImageButton repeatButton;
     private final Handler handler = new Handler(Looper.getMainLooper());
     private final Runnable updateSeekBarTask = new Runnable() {
         @Override
@@ -206,6 +211,7 @@ public class MainActivity extends AppCompatActivity {
         Button allTracksButton = findViewById(R.id.allTracksButton);
         
         setupPlaylistDrawer(addPlaylistButton, allTracksButton);
+        setupDragAndDrop();
 
         settingsButton.setOnClickListener(v -> {
             updateSettingsPaneState();
@@ -298,6 +304,29 @@ public class MainActivity extends AppCompatActivity {
         prevButton.setOnClickListener(v -> {
             if (mediaController != null) {
                 mediaController.seekToPrevious();
+            }
+        });
+
+        shuffleButton = findViewById(R.id.shuffleButton);
+        repeatButton = findViewById(R.id.repeatButton);
+
+        shuffleButton.setOnClickListener(v -> {
+            if (mediaController != null) {
+                boolean shuffleModeEnabled = !mediaController.getShuffleModeEnabled();
+                mediaController.setShuffleModeEnabled(shuffleModeEnabled);
+                updateUI();
+            }
+        });
+
+        repeatButton.setOnClickListener(v -> {
+            if (mediaController != null) {
+                int mode = mediaController.getRepeatMode();
+                int nextMode;
+                if (mode == Player.REPEAT_MODE_OFF) nextMode = Player.REPEAT_MODE_ALL;
+                else if (mode == Player.REPEAT_MODE_ALL) nextMode = Player.REPEAT_MODE_ONE;
+                else nextMode = Player.REPEAT_MODE_OFF;
+                mediaController.setRepeatMode(nextMode);
+                updateUI();
             }
         });
 
@@ -431,7 +460,8 @@ public class MainActivity extends AppCompatActivity {
 
         adapter = new TrackAdapter(musicLibrary.getAllTracks(), 
             (track, position) -> playTrack(position),
-            this::showEditTrackDialog);
+            (track, position) -> { /* Long click ignored */ },
+            (track, position) -> showEditTrackDialog(track, position));
         
         // Default sort by date added (newest first)
         adapter.sortByDateAdded();
@@ -460,7 +490,8 @@ public class MainActivity extends AppCompatActivity {
 
         addPlaylistButton.setOnClickListener(v -> showCreatePlaylistDialog());
         allTracksButton.setOnClickListener(v -> {
-            adapter.setTracks(musicLibrary.getAllTracks());
+            currentPlaylistId = -1;
+            loadMusic(); // Reload all tracks with default listeners
             drawerLayout.closeDrawer(GravityCompat.START);
         });
 
@@ -554,10 +585,67 @@ public class MainActivity extends AppCompatActivity {
     }
 
     private void loadPlaylist(Playlist playlist) {
-        List<MusicTrack> tracks = db.playlistDao().getTracksForPlaylist(playlist.getId());
-        adapter.setTracks(tracks);
-        drawerLayout.closeDrawer(GravityCompat.START);
-        Toast.makeText(this, "Loaded: " + playlist.getName(), Toast.LENGTH_SHORT).show();
+        currentPlaylistId = playlist.getId();
+        new Thread(() -> {
+            List<MusicTrack> tracks = db.playlistDao().getTracksForPlaylist(playlist.getId());
+            runOnUiThread(() -> {
+                if (adapter != null) {
+                    adapter = new TrackAdapter(tracks,
+                        (track, position) -> playTrack(position),
+                        (track, position) -> { /* Long click handled by drag in playlist */ },
+                        (track, position) -> showEditTrackDialog(track, position));
+                    adapter.setShowDragHandle(true);
+                    adapter.setOnStartDragListener(viewHolder -> itemTouchHelper.startDrag(viewHolder));
+                    recyclerView.setAdapter(adapter);
+                }
+                drawerLayout.closeDrawer(GravityCompat.START);
+                Toast.makeText(this, "Loaded: " + playlist.getName(), Toast.LENGTH_SHORT).show();
+            });
+        }).start();
+    }
+
+    private void setupDragAndDrop() {
+        ItemTouchHelper.SimpleCallback simpleCallback = new ItemTouchHelper.SimpleCallback(ItemTouchHelper.UP | ItemTouchHelper.DOWN, 0) {
+            @Override
+            public boolean onMove(@NonNull RecyclerView recyclerView, @NonNull RecyclerView.ViewHolder viewHolder, @NonNull RecyclerView.ViewHolder target) {
+                int fromPosition = viewHolder.getAdapterPosition();
+                int toPosition = target.getAdapterPosition();
+                
+                if (adapter != null) {
+                    List<MusicTrack> tracks = adapter.getTracks();
+                    Collections.swap(tracks, fromPosition, toPosition);
+                    adapter.notifyItemMoved(fromPosition, toPosition);
+                    return true;
+                }
+                return false;
+            }
+
+            @Override
+            public void onSwiped(@NonNull RecyclerView.ViewHolder viewHolder, int direction) {
+            }
+
+            @Override
+            public void clearView(@NonNull RecyclerView recyclerView, @NonNull RecyclerView.ViewHolder viewHolder) {
+                super.clearView(recyclerView, viewHolder);
+                if (currentPlaylistId != -1 && adapter != null) {
+                    savePlaylistOrder();
+                }
+            }
+        };
+
+        itemTouchHelper = new ItemTouchHelper(simpleCallback);
+        itemTouchHelper.attachToRecyclerView(recyclerView);
+    }
+
+    private void savePlaylistOrder() {
+        if (currentPlaylistId == -1 || adapter == null) return;
+        List<MusicTrack> tracks = new ArrayList<>(adapter.getTracks());
+        long playlistId = currentPlaylistId;
+        new Thread(() -> {
+            for (int i = 0; i < tracks.size(); i++) {
+                db.playlistDao().updateTrackOrder(playlistId, tracks.get(i).getFilePath(), i);
+            }
+        }).start();
     }
 
     private void showEditTrackDialog(MusicTrack track, int position) {
@@ -569,9 +657,22 @@ public class MainActivity extends AppCompatActivity {
         ImageView albumArt = view.findViewById(R.id.bottomSheetAlbumArt);
         View btnEdit = view.findViewById(R.id.btnEditInfo);
         View btnAddPlaylist = view.findViewById(R.id.btnAddToPlaylist);
+        View btnRemoveFromPlaylist = view.findViewById(R.id.btnRemoveFromPlaylist);
 
         title.setText(track.getTitle());
         artist.setText(track.getArtist());
+        
+        if (currentPlaylistId != -1) {
+            btnRemoveFromPlaylist.setVisibility(View.VISIBLE);
+            btnRemoveFromPlaylist.setOnClickListener(v -> {
+                bottomSheetDialog.dismiss();
+                db.playlistDao().removeTrackFromPlaylist(currentPlaylistId, track.getFilePath());
+                // Refresh the current playlist view
+                Playlist p = new Playlist("");
+                p.setId(currentPlaylistId);
+                loadPlaylist(p);
+            });
+        }
         
         Uri artworkUri = ContentUris.withAppendedId(Uri.parse("content://media/external/audio/albumart"), track.getAlbumId());
         Glide.with(this)
@@ -625,11 +726,14 @@ public class MainActivity extends AppCompatActivity {
                 holder.itemView.setOnClickListener(v -> holder.checkBox.toggle());
                 
                 holder.checkBox.setOnCheckedChangeListener((buttonView, isNowChecked) -> {
-                    if (isNowChecked) {
-                        db.playlistDao().addTrackToPlaylist(new PlaylistTrack(playlist.getId(), track.getFilePath()));
-                    } else {
-                        db.playlistDao().removeTrackFromPlaylist(playlist.getId(), track.getFilePath());
-                    }
+                    new Thread(() -> {
+                        if (isNowChecked) {
+                            int nextOrder = db.playlistDao().getMaxOrderForPlaylist(playlist.getId()) + 1;
+                            db.playlistDao().addTrackToPlaylist(new PlaylistTrack(playlist.getId(), track.getFilePath(), nextOrder));
+                        } else {
+                            db.playlistDao().removeTrackFromPlaylist(playlist.getId(), track.getFilePath());
+                        }
+                    }).start();
                 });
             }
 
@@ -826,6 +930,22 @@ public class MainActivity extends AppCompatActivity {
     private void updateUI() {
         if (mediaController != null) {
             playPauseButton.setImageResource(mediaController.isPlaying() ? R.drawable.ic_pause : R.drawable.ic_play);
+            
+            shuffleButton.setColorFilter(mediaController.getShuffleModeEnabled() ? 
+                getColor(R.color.cat_red) : getColor(R.color.cat_text));
+            
+            int repeatMode = mediaController.getRepeatMode();
+            if (repeatMode == Player.REPEAT_MODE_OFF) {
+                repeatButton.setImageResource(R.drawable.ic_repeat);
+                repeatButton.setColorFilter(getColor(R.color.cat_text));
+            } else if (repeatMode == Player.REPEAT_MODE_ALL) {
+                repeatButton.setImageResource(R.drawable.ic_repeat);
+                repeatButton.setColorFilter(getColor(R.color.cat_red));
+            } else if (repeatMode == Player.REPEAT_MODE_ONE) {
+                repeatButton.setImageResource(R.drawable.ic_repeat_one);
+                repeatButton.setColorFilter(getColor(R.color.cat_red));
+            }
+
             MediaItem currentItem = mediaController.getCurrentMediaItem();
             if (currentItem != null && currentItem.mediaMetadata.title != null) {
                 currentTrackTitle.setText(currentItem.mediaMetadata.title);
